@@ -1,51 +1,46 @@
+// RESPONSABILIDAD: Consulta la base de datos
 // Importamos nuestro pool de conexiones
 import { pool } from '../db.js';
 
+// Importamos bcrypt para generar hashes y comparar contraseñas
+import bcrypt from 'bcryptjs';
+
 // Obtener todos los usuarios
-export const getAllUsers = async (req, res) => {
-    console.log('getAllUsers called');
-
-    try {
-        const [rows] = await pool.query('SELECT * FROM usuarios');
-
-        console.log(rows);
-
-        res.json(rows);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+export const getAllUsersQuery = async () => {
+    //Ejecutamos la consulta SQL
+    const [rows] = await pool.query('SELECT * FROM usuarios');
+    // Develvemos el resultado de la consulta
+    return rows;
 };
 
 // Obtener usuarios por email
-export const getUserByEmail = async (req, res) => {
-    const { email } = req.params;
-
-    try {
+export const getUserByEmailQuery = async (email) => {
         const [rows] = await pool.query(
             'SELECT * FROM usuarios WHERE email = ?',
             [email]
         );
-
-        res.json(rows);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+        return rows;
 };
 
-// Buscar usuario por email
-export const getBuscarNombre = async (nombre) => {
+// Buscar usuario por nombre
+export const getUserByNameQuery = async (nombre) => {
     const buscar = `%${nombre}%`;
-    const result = await pool.query(
-        'SELECT * FROM usuarios WHERE nombre LIKE ?',
-        [buscar]
+    const [rows] = await pool.query(
+      "SELECT * FROM usuarios WHERE nombre LIKE ?",
+      [buscar],
     );
-    return result[0];
+    return rows;
 };
 
 // Crear nuevo usuario 
-export const postCrearUsuario = async (nombre, documento, carnet, email, contrasenia) => {
-    try {
-        // Se define la consulta SQL con parametros
+export const postCrearUsuarioQuery = async (nombre, documento, carnet, email, contrasenia) => {
+    // Número de salt rounds (cost). 10 es un valor razonable para desarrollo
+    const SALT_ROUNDS = 10;
+    // Generamos el salt de bcrypt (hash salado internamente)
+    const salt = bcrypt.genSaltSync(SALT_ROUNDS);
+
+    // Generamos el hash a partir de la contraseña y el salt
+    const contraseniaHashed = bcrypt.hashSync(contrasenia, salt);
         const query = `
             INSERT INTO usuarios
             (nombre, documento, carnet, email, contrasenia, bloqueado, ultimo_login, activo)
@@ -58,7 +53,7 @@ export const postCrearUsuario = async (nombre, documento, carnet, email, contras
             documento,
             carnet,
             email,
-            contrasenia
+            contraseniaHashed
         ]);
 
         // Obtener el usuario recién creado
@@ -68,74 +63,66 @@ export const postCrearUsuario = async (nombre, documento, carnet, email, contras
         );
 
         return rows[0];
-
-    } catch (err) {
-        // Si ocurre error 
-        throw err;
-    }
 };
 
 // Actualizar usuario
-export const actualizarUsuario = async (usuario, res) => {
-    // Definimos la consulta SQL con parámetros
+export const actualizarUsuarioQuery = async (usuario) => {
+    const SALT_ROUNDS = 10;
+
+    // usuario = [nombre, documento, carnet, email, contrasenia, id_usuario]
+    const contraseniaHasheada = bcrypt.hashSync(usuario[4], SALT_ROUNDS);
+
+    const datosActualizados = [
+        usuario[0],
+        usuario[1],
+        usuario[2],
+        usuario[3],
+        contraseniaHasheada,
+        usuario[5]
+    ];
+
     const query = `UPDATE usuarios
         SET nombre=?,
-        documento=?,
-        carnet=?,
-        email=?,
-        contrasenia=?
+            documento=?,
+            carnet=?,
+            email=?,
+            contrasenia=?
         WHERE id_usuario=?`;
 
-    try {
-        // Ejecutamos la actualización
-        const [result] = await pool.query(query, usuario);
+    const [result] = await pool.query(query, datosActualizados);
 
-        // Si no encontró usuario con ese ID
-        if (result.affectedRows === 0) {
-            return res.status(404).json({ message: 'Usuario no encontrado' });
-        }
-
-        // Obtenemos el ID que viene en la posición 6 del arreglo
-        const id = usuario[5];
-
-        // Retornamos el usuario actualizado
-        const [rows] = await pool.query(
-            'SELECT * FROM usuarios WHERE id_usuario = ?',
-            [id]
-        );
-
-        res.json(rows[0]);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
+    if (result.affectedRows === 0) {
+        const error = new Error('Usuario no encontrado');
+        error.statusCode = 404;
+        throw error;
     }
+
+    const [rows] = await pool.query(
+        'SELECT * FROM usuarios WHERE id_usuario = ?',
+        [usuario[5]]
+    );
+
+    return rows[0];
 };
 
 // Eliminar usuario
-export const eliminarUsuario = async (id_usuario) => {
-    try {
-        // Verificamos si el usuario existe
-        const [usuarioAEliminar] = await pool.query(
-            'SELECT * FROM usuarios WHERE id_usuario = ?',
-            [id_usuario]
-        );
+export const eliminarUsuarioQuery = async (id_usuario) => {
+    const [usuarioAEliminar] = await pool.query(
+        'SELECT * FROM usuarios WHERE id_usuario = ?',
+        [id_usuario]
+    );
 
-        // Si no existe, lanzamos un error
-        if (usuarioAEliminar.length === 0) {
-            throw new Error('Usuario no encontrado');
-        }
-
-        // Si existe, ejecutamos la sentencia DELETE
-        await pool.query(
-            'DELETE FROM usuarios WHERE id_usuario = ?',
-            [id_usuario]
-        );
-
-        // Confirmamos la eliminación
-        return {
-            message: 'Usuario eliminado correctamente',
-            usuario: usuarioAEliminar[0]
-        };
-    } catch (err) {
-        return { error: err.message };
+    if (usuarioAEliminar.length === 0) {
+        throw new Error('Usuario no encontrado');
     }
+
+    await pool.query(
+        'DELETE FROM usuarios WHERE id_usuario = ?',
+        [id_usuario]
+    );
+
+    return {
+        message: 'Usuario eliminado correctamente',
+        usuario: usuarioAEliminar[0]
+    };
 };
